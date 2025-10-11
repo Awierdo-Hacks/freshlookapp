@@ -1,0 +1,117 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test-api:
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_PASSWORD: supersecret
+          POSTGRES_DB: catalog_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: api/package-lock.json
+        
+    - name: Install API dependencies
+      run: |
+        cd api
+        npm ci
+        
+    - name: Run database migrations
+      run: |
+        cd api
+        npm run migrate
+      env:
+        DB_HOST: localhost
+        POSTGRES_PASSWORD: supersecret
+        POSTGRES_DB: catalog_test
+        
+    - name: Run API tests
+      run: |
+        cd api
+        npm test
+      env:
+        DB_HOST: localhost
+        POSTGRES_PASSWORD: supersecret
+        POSTGRES_DB: catalog_test
+
+  test-frontend:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: frontend/package-lock.json
+        
+    - name: Install Frontend dependencies
+      run: |
+        cd frontend
+        npm ci
+        
+    - name: Run Frontend tests
+      run: |
+        cd frontend
+        npm test
+
+  build-and-deploy:
+    needs: [test-api, test-frontend]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup Docker Buildx
+      uses: docker/setup-buildx-action@v2
+      
+    - name: Login to Docker Hub
+      uses: docker/login-action@v2
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+        
+    - name: Build and push API image
+      uses: docker/build-push-action@v4
+      with:
+        context: ./api
+        push: true
+        tags: freshlook/api:latest
+        
+    - name: Deploy to production
+      uses: appleboy/ssh-action@v0.1.5
+      with:
+        host: ${{ secrets.PROD_HOST }}
+        username: ${{ secrets.PROD_USER }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        script: |
+          cd /var/www/freshlookapp
+          docker-compose pull
+          docker-compose up -d
+          docker system prune -f

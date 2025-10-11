@@ -1,0 +1,67 @@
+version: '3.8'
+services:
+  api:
+    build: ./api
+    ports:
+      - '3000:3000'
+    environment:
+      - NODE_ENV=production
+      - DB_HOST=db
+      - DB_USER=postgres
+      - POSTGRES_PASSWORD_FILE=/run/secrets/db-password
+      - POSTGRES_DB=catalog
+    volumes:
+      - ./api:/usr/src/app
+    command: npm start
+    depends_on:
+      - db
+    secrets:
+      - db-password
+    restart: unless-stopped
+    
+  frontend:
+    build: ./frontend
+    ports:
+      - '3001:3001'
+    depends_on:
+      - api
+    restart: unless-stopped
+    
+  db:
+    image: postgres:14
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=catalog
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD_FILE=/run/secrets/db-password
+    secrets:
+      - db-password
+    restart: unless-stopped
+    
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redisdata:/data
+    restart: unless-stopped
+    
+  nginx:
+    image: nginx:alpine
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
+      - ./ssl:/etc/nginx/ssl
+    depends_on:
+      - api
+      - frontend
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  
+secrets:
+  db-password:
+    file: ./secrets/db-password.txt
